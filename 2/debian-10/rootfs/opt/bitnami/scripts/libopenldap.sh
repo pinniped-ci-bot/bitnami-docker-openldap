@@ -34,6 +34,8 @@ export LDAP_DATA_DIR="${LDAP_VOLUME_DIR}/data"
 export LDAP_ONLINE_CONF_DIR="${LDAP_VOLUME_DIR}/slapd.d"
 export LDAP_PID_FILE="${LDAP_BASE_DIR}/var/run/slapd.pid"
 export LDAP_CUSTOM_LDIF_DIR="${LDAP_CUSTOM_LDIF_DIR:-/ldifs}"
+export LDAP_SERVER_CONFIG_BEFORE_CUSTOM_LDIF_DIR="${LDAP_SERVER_CONFIG_BEFORE_CUSTOM_LDIF_DIR:-/server_config_before_custom_ldifs}"
+export LDAP_SERVER_CONFIG_AFTER_CUSTOM_LDIF_DIR="${LDAP_SERVER_CONFIG_AFTER_CUSTOM_LDIF_DIR:-/server_config_after_custom_ldifs}"
 export LDAP_CUSTOM_SCHEMA_FILE="${LDAP_CUSTOM_SCHEMA_FILE:-/schema/custom.ldif}"
 export PATH="${LDAP_BIN_DIR}:${LDAP_SBIN_DIR}:$PATH"
 export LDAP_TLS_CERT_FILE="${LDAP_TLS_CERT_FILE:-}"
@@ -364,7 +366,7 @@ EOF
 }
 
 ########################
-# Add custom LDIF files
+# Add custom LDIF files as the admin user
 # Globals:
 #   LDAP_*
 # Arguments:
@@ -376,6 +378,21 @@ ldap_add_custom_ldifs() {
     info "Loading custom LDIF files..."
     warn "Ignoring LDAP_USERS, LDAP_PASSWORDS, LDAP_USER_DC and LDAP_GROUP environment variables..."
     find "$LDAP_CUSTOM_LDIF_DIR" -maxdepth 1 \( -type f -o -type l \) -iname '*.ldif' -print0 | sort -z | xargs --null -I{} bash -c ". /opt/bitnami/scripts/libos.sh && debug_execute ldapadd -f {} -H 'ldapi:///' -D $LDAP_ADMIN_DN -w $LDAP_ADMIN_PASSWORD"
+}
+
+########################
+# Add custom server config LDIF files using the same SASL/EXTERNAL authentication which is used for other server configuration
+# Globals:
+#   LDAP_*
+# Arguments:
+#   $1 - name of the variable whose value is the directory containing LDIF files which should be loaded
+# Returns
+#   None
+#########################
+ldap_add_custom_server_config_ldifs() {
+    info "Loading custom server config LDIF files..."
+    directory_variable_name=$1
+    find "${!directory_variable_name}" -maxdepth 1 \( -type f -o -type l \) -iname '*.ldif' -print0 | sort -z | xargs --null -I{} bash -c ". /opt/bitnami/scripts/libos.sh && debug_execute ldapadd -f {} -Y EXTERNAL -H 'ldapi:///'"
 }
 
 ########################
@@ -428,10 +445,16 @@ ldap_initialize() {
             if [[ -f "$LDAP_CUSTOM_SCHEMA_FILE" ]]; then
                 ldap_add_custom_schema
             fi
+            if ! is_dir_empty "$LDAP_SERVER_CONFIG_BEFORE_CUSTOM_LDIF_DIR"; then
+                ldap_add_custom_server_config_ldifs LDAP_SERVER_CONFIG_BEFORE_CUSTOM_LDIF_DIR
+            fi
             if ! is_dir_empty "$LDAP_CUSTOM_LDIF_DIR"; then
                 ldap_add_custom_ldifs
             else
                 ldap_create_tree
+            fi
+            if ! is_dir_empty "$LDAP_SERVER_CONFIG_AFTER_CUSTOM_LDIF_DIR"; then
+                ldap_add_custom_server_config_ldifs LDAP_SERVER_CONFIG_AFTER_CUSTOM_LDIF_DIR
             fi
         fi
         ldap_stop
